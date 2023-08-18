@@ -1,64 +1,196 @@
 import numpy as np
 import argparse as ap
-import sys
 
+class Network:
+    def __init__(self):
+        self.network = [] # layers
+        self.architecture = [] # mapping input neurons --> output neurons
+        self.params = [] # W, b
+        self.memory = [] # Z, A
+        self.gradients = [] # dW, db
 
+    def add(self, layer, activation='relu'):
+        ''' Add a layer to the NN '''
+        self.network.append(layer)
 
-'''
-Training Loop:
+    def compile(self, X):
+        ''' Initialize the model's architecture '''
+        for idx, layer in enumerate(self.network):
+            if idx == 0:
+                self.architecture.append({'input_dim':X.shape[1],
+                                  'output_dim':self.network[0].neurons,
+                                  'activation':'relu'})
+            elif 0 < idx and idx < len(self.network) - 1:
+                self.architecture.append({'input_dim':self.network[idx-1].neurons,
+                                  'output_dim':self.network[idx].neurons,
+                                  'activation':'relu'})
+            else:
+                self.architecture.append({'input_dim':self.network[idx-1].neurons,
+                                  'output_dim':self.network[idx].neurons,
+                                  'activation':'softmax'})
+                   
 
-w = init_weights()
-for each epoch e:
-    for each mb_x, mb_y in e:
-        predictions = h(mb_x, w) #forward prop
-        loss = compute_loss(predictions, mb_y)
-        gradients = back_prop(loss, w) #or could be back_prop(mb_y,preds,y)
-        w = update_weights(grads, w, learn_rate)
-        if verbose:
-            eval on dev
-            if best dev result yet:
-                checkpoint(w)
-            if too long since best:
-                early stopping
-    eval on dev if not verbose
-'''
+    def init_layers(self, init_range):
+        ''' Initialize the weights and biases of each layer '''
+        np.random.seed(99)
+        
+        for idx, layer in enumerate(self.architecture):
+            input_size = layer['input_dim']
+            output_size = layer['output_dim']
+
+            self.params.append({
+                'W':np.random.uniform(-init_range, init_range, (output_size, input_size)),
+                'b':np.random.uniform(-init_range, init_range, (1, output_size))
+            })
+
+    def forward_propagation(self, X):
+        ''' Does a forward pass through full NN '''
+        A_curr = X
+
+        for idx in range(len(self.params)):
+            A_prev = A_curr
+            W_curr = self.params[idx]['W']
+            b_curr = self.params[idx]['b']
+            activation = self.architecture[idx]['activation']
+            A_curr, Z_curr = self.network[idx].forward(A_prev,
+                                                     W_curr,
+                                                     b_curr,
+                                                     activation)
+            self.memory.append({'A':A_prev, 'Z':Z_curr})
     
-def defineFlags():
+        return A_curr
+
+    def backward_propagation(self, y_hat, y):
+        ''' Does a backward pass through full NN '''
+        #y = y.reshape(y_hat.shape)
+        #COMPUTE LOSS: Only giong to do categorical cross-entropy
+        #              for multi-classification first
+        #dA_prev = -(np.divide(y, y_hat) - np.divide(1-y, 1-y_hat))
+        dA_prev = y_hat - 1
+        dA_prev /= len(y)
+
+        for idx, layer in reversed(list(enumerate(self.network))):
+            dA_curr = dA_prev
+            A_prev = self.memory[idx]['A']
+            Z_curr = self.memory[idx]['Z']
+            W_curr = self.params[idx]['W']
+            activation = self.architecture[idx]['activation']
+
+            dA_prev, dW_curr, db_curr = layer.backward(
+                dA_curr, W_curr, Z_curr, A_prev, activation)
+            
+            self.gradients.append({
+                'dW':dW_curr,
+                'db':db_curr
+            })
+
+    def gradient_descent(self, learn_rate):
+        for idx, layer in enumerate(self.network):
+            self.params[idx]['W'] -= learn_rate * list(reversed(self.gradients))[idx]['dW'].T
+            self.params[idx]['b'] -= learn_rate * list(reversed(self.gradients))[idx]['db']
+
     '''
-    Build the commandline argument parser
+    def get_accuracy(self, y_hat, y):
+        return np.mean(np.argmax(y_hat, axis=1) == y)
     '''
-    parser = ap.ArgumentParser()
-    parser.add_argument('-v',"--VERBOSE", default=False)
-    parser.add_argument('train_feat',    help='the name of training set feature fileThe file should contain N lines (where N is the number of data points), and each line should contains D space-delimited floating point values (where D is the feature dimension).')
-    parser.add_argument('train_target',  help='the name of the training set target (label) file. If PROBLEM_MODE (see below) is C (for classification) this should be a file with N lines, where each line contains a single integer in the set {0, 1, . . . , C −1}indicating the class label. If PROBLEM_MODE is R (for regression), this should be a file with N lines, where each line contains C space-delimited floating point values. In either case, this file contains the true outputs for all N datapoints.')
-    parser.add_argument('dev_feat',      help='the name of the development set feature file, in the same format as TRAIN_FEAT_FN.')
-    parser.add_argument('dev_target',    help='the name of the development set target (label) file, in the same format as TRAIN_TARGET_FN.')
-    parser.add_argument('epochs',        type=int, help='the total number of epochs (i.e. passes through the data) to train for')
-    parser.add_argument('learnrate',     type=float, help='the step size to use for training (with MB-SGD)')
-    parser.add_argument('nunits',        type=int,help='the dimension of the hidden layers (aka number of hidden units per hidden layer). All hidden layers will have this same size.')
-    parser.add_argument('type',          help='this should be either C (to indicate classification) or R (to indicate regresion).')
-    parser.add_argument('hidden_act',    help='this is the element-wise, non-linear function to apply at each hidden layer, and can be sig (for logistic sigmoid), tanh (for hyperbolic tangent) or relu (for rectified linear unit).')
-    parser.add_argument('init_range',    type=float,help='all of your weights (including bias vectors) should be initialized uniformly random in the range [−INIT_RANGE, INIT_RANGE]).')
-    parser.add_argument('num_classes',   type=int,help='The number of classes (for classification) or the dimension of the output vector (if regression).')
-    parser.add_argument('-mb','--MINIBATCH_SIZE',type=int, default=0,help='this specifies the number of data points to be included in each mini-batch.')
-    parser.add_argument('-nlayers','--NUM_HIDDEN_LAYERS', type=int,default=0,help='this is the number of hidden layers in your neural network.')
-    return parser
+        
+    def calculate_loss(self, y_hat, y):
+        ''' Cross Entropy Loss '''
+        eps = 1e-5
+        log_prob = -np.log(y_hat + eps)
+        return np.sum(log_prob)/len(y)
 
-def loadData(args):
-    train_X = np.loadtxt(args.train_feat, dtype=float).astype(np.float32)
-    train_y = np.loadtxt(args.train_target, dtype=float).astype(np.float32)
-    dev_X = np.loadtxt(args.dev_feat, dtype=float).astype(np.float32)
-    dev_y = np.loadtxt(args.dev_target, dtype=float).astype(np.float32)
-    return train_X, train_y, dev_X, dev_y
+    def fit(self, X, y, init_range, epochs, learn_rate):
+        ''' Train the NN '''
+        self.init_layers(init_range)
+        
+        self.loss = []
+        #self.accuracy = []
+        
+        for i in range(epochs+1):
+            y_hat = self.forward_propagation(X)
+            self.loss.append(self.calculate_loss(y_hat, y))
+            #self.accuracy.append(self.get_accuracy(y_hat, y))
 
-args = defineFlags().parse_args()
-train_X, train_y, dev_X, dev_y = loadData(args)
-D = train_X.shape[1]
-L = args.nunits
-C = args.num_classes
+            self.backward_propagation(y_hat, y)
+            self.gradient_descent(learn_rate)
 
-print(train_X.shape[0])
-print(train_X.shape[1])
-print(train_y.shape[0])
-#print(train_y.shape[1])
+            if i % 20 == 0:
+                #s = 'EPOCH: {0:0=3d} '.format(i), 'ACCURACY: {0:0=3f} '.format(self.accuracy[-1]), 'LOSS: {0:0=3f}'.format(self.loss[-1])
+                s = 'EPOCH: {0:0=3d} '.format(i), 'LOSS: {0:0=3f}'.format(self.loss[-1])
+                print(s)
+        #Evaluate on dev
+                
 
+class DenseLayer:
+    def __init__(self, neurons):
+        self.neurons = neurons
+
+    def relu(self, Z):
+        return np.maximum(0,Z)
+
+    def sigmoid(self, Z):
+        return 1 / (1 + np.exp(-Z))
+
+    def softmax(self, Z):
+        exp = np.exp(Z)
+        exp_sum = np.sum(exp, axis=1, keepdims=True)
+        return exp/exp_sum
+
+    def derivative_relu(self, dA, Z):
+        dZ = np.array(dA, copy=True)
+        dZ[Z <= 0] = 0
+        return dZ
+
+    def derivative_sigmoid(self, dA, Z):
+        sig = self.sigmoid(Z)
+        return dA*sig*(1-sig)
+        
+    def forward(self, A_prev, W_curr, b_curr, activation):
+        ''' Forward Propagation of a single layer '''
+        Z_curr = np.dot(A_prev, W_curr.T) + b_curr
+
+        if activation == "relu":
+            A_curr = self.relu(Z_curr)
+        elif activation == "sigmoid":
+            A_curr = self.sigmoid(Z_curr)
+        elif activation == "softmax":
+            A_curr = self.softmax(Z_curr)
+        else:
+            raise Exception("Activation function "+activation+ " not supported")
+        
+        return A_curr, Z_curr
+
+    def backward(self, dA_curr, W_curr, Z_curr, A_prev, activation):
+        ''' Backward Propagation of a single layer '''
+        if activation == 'softmax':
+            dW_curr = np.dot(A_prev.T, dA_curr)
+            db_curr = np.sum(dA_curr, axis=0, keepdims=True)
+            dA_prev = np.dot(dA_curr, W_curr)
+        elif activation == 'relu':
+            dZ_curr = self.derivative_relu(dA_curr, Z_curr)
+            dW_curr = np.dot(A_prev.T, dZ_curr)
+            db_curr = np.sum(dZ_curr, axis=0, keepdims=True)
+            dA_prev = np.dot(dZ_curr, W_curr)
+        else:
+            raise Exception('Activation function '+activation+' not supported')
+
+        return dA_prev, dW_curr, db_curr
+
+
+#args = defineFlags().parse_args()
+#train_X, train_y, dev_X, dev_y = loadData(args)
+
+train_X = np.loadtxt("./prog1_data/dataset2.train_features.txt", dtype=float).astype(np.float32).T
+train_y = np.loadtxt("./prog1_data/dataset2.train_targets.txt", dtype=float).astype(np.float32)
+dev_X   = np.loadtxt("./prog1_data/dataset2.dev_features.txt", dtype=float).astype(np.float32).T
+dev_y   = np.loadtxt("./prog1_data/dataset2.dev_targets.txt", dtype=float).astype(np.float32)
+
+model = Network()
+model.add(DenseLayer(4))
+model.add(DenseLayer(6))
+model.add(DenseLayer(8))
+model.add(DenseLayer(4))
+model.add(DenseLayer(3))
+model.compile(train_X)
+model.fit(train_X, train_y, 0.4, 500, 0.1)
