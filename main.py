@@ -8,6 +8,8 @@ class Network:
         self.params = [] # W, b
         self.memory = [] # Z, A
         self.gradients = [] # dW, db
+        self.loss = [] # training set loss
+        self.dev_loss = [] # dev set loss
 
     def add(self, layer, activation='relu'):
         ''' Add a layer to the NN '''
@@ -100,27 +102,33 @@ class Network:
         log_prob = -np.log(y_hat + eps)
         return np.sum(log_prob)/len(y)
 
-    def fit(self, X, y, init_range, epochs, learn_rate):
+    def fit(self, X, y, dev_X, dev_y, init_range, epochs, learn_rate):
         ''' Train the NN '''
         self.init_layers(init_range)
         
         self.loss = []
+        self.dev_loss = []
         #self.accuracy = []
-        
+        min_loss = 1
         for i in range(epochs+1):
             y_hat = self.forward_propagation(X)
             self.loss.append(self.calculate_loss(y_hat, y))
             #self.accuracy.append(self.get_accuracy(y_hat, y))
 
+            if self.loss[i] < min_loss:
+                self.checkpoint = self.params.copy()
+
             self.backward_propagation(y_hat, y)
             self.gradient_descent(learn_rate)
 
-            if i % 20 == 0:
+            #dev_y_hat = self.forward_propagation(dev_X)
+            #self.dev_loss.append(self.calculate_loss(dev_y_hat, dev_y))
+        
+            if i % 10 == 0:
                 #s = 'EPOCH: {0:0=3d} '.format(i), 'ACCURACY: {0:0=3f} '.format(self.accuracy[-1]), 'LOSS: {0:0=3f}'.format(self.loss[-1])
-                s = 'EPOCH: {0:0=3d} '.format(i), 'LOSS: {0:0=3f}'.format(self.loss[-1])
+                s = 'EPOCH: {0:0=3d} '.format(i), 'Training Loss: {0:0=3f}'.format(self.loss[-1])#, 'Dev Loss: {0:0=3f}'.format(self.dev_loss[-1])
                 print(s)
-        #Evaluate on dev
-                
+            
 
 class DenseLayer:
     def __init__(self, neurons):
@@ -178,8 +186,6 @@ class DenseLayer:
         return dA_prev, dW_curr, db_curr
 
 
-#args = defineFlags().parse_args()
-#train_X, train_y, dev_X, dev_y = loadData(args)
 
 train_X = np.loadtxt("./prog1_data/dataset2.train_features.txt", dtype=float).astype(np.float32).T
 train_y = np.loadtxt("./prog1_data/dataset2.train_targets.txt", dtype=float).astype(np.float32)
@@ -193,4 +199,4 @@ model.add(DenseLayer(8))
 model.add(DenseLayer(4))
 model.add(DenseLayer(3))
 model.compile(train_X)
-model.fit(train_X, train_y, 0.4, 500, 0.1)
+model.fit(train_X, train_y, dev_X, dev_y, 0.4, 500, 0.1)
