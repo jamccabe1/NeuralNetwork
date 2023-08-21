@@ -1,8 +1,65 @@
 import numpy as np
 import argparse as ap
 
+class DenseLayer:
+    def __init__(self, neurons):
+        self.neurons = neurons
+
+    def _relu(self, Z):
+        return np.maximum(0,Z)
+
+    def _sigmoid(self, Z):
+        return 1 / (1 + np.exp(-Z))
+
+    def _softmax(self, Z):
+        exp = np.exp(Z)
+        exp_sum = np.sum(exp, axis=1, keepdims=True)
+        return exp/exp_sum
+
+    def _derivative_relu(self, dA, Z):
+        dZ = np.array(dA, copy=True)
+        dZ[Z <= 0] = 0
+        return dZ
+
+    def _derivative_sigmoid(self, dA, Z):
+        sig = self._sigmoid(Z)
+        return dA*sig*(1-sig)
+        
+    def forward(self, A_prev, W_curr, b_curr, activation):
+        ''' Forward Propagation of a single layer '''
+        Z_curr = np.dot(A_prev, W_curr.T) + b_curr
+
+        if activation == "relu":
+            A_curr = self._relu(Z_curr)
+        elif activation == "sigmoid":
+            A_curr = self._sigmoid(Z_curr)
+        elif activation == "softmax":
+            A_curr = self._softmax(Z_curr)
+        else:
+            raise Exception("Activation function "+activation+ " not supported")
+        
+        return A_curr, Z_curr
+
+    def backward(self, dA_curr, W_curr, Z_curr, A_prev, activation):
+        ''' Backward Propagation of a single layer '''
+        if activation == 'softmax':
+            dW_curr = np.dot(A_prev.T, dA_curr)
+            db_curr = np.sum(dA_curr, axis=0, keepdims=True)
+            dA_prev = np.dot(dA_curr, W_curr)
+        elif activation == 'relu':
+            dZ_curr = self._derivative_relu(dA_curr, Z_curr)
+            dW_curr = np.dot(A_prev.T, dZ_curr)
+            db_curr = np.sum(dZ_curr, axis=0, keepdims=True)
+            dA_prev = np.dot(dZ_curr, W_curr)
+        else:
+            raise Exception('Activation function '+activation+' not supported')
+
+        return dA_prev, dW_curr, db_curr
+
+
 class Network:
     def __init__(self):
+        self.curr_epoch = 0
         self.network = [] # layers
         self.architecture = [] # mapping input neurons --> output neurons
         self.params = [] # W, b
@@ -32,7 +89,7 @@ class Network:
                                   'activation':'softmax'})
                    
 
-    def init_layers(self, init_range):
+    def _init_layers(self, num_data, init_range):
         ''' Initialize the weights and biases of each layer '''
         np.random.seed(99)
         
@@ -44,8 +101,17 @@ class Network:
                 'W':np.random.uniform(-init_range, init_range, (output_size, input_size)),
                 'b':np.random.uniform(-init_range, init_range, (1, output_size))
             })
+            #self.memory.append({
+            #    'Z':np.ones((num_data, output_size)),
+            #    'A':np.ones((num_data, input_size))
+            #})
+            #self.gradients.append({
+            #    'dW':np.ones((output_size, input_size)),
+            #    'db':np.ones((1, output_size))
+            #})
+            
 
-    def forward_propagation(self, X):
+    def _forward_propagation(self, X):
         ''' Does a forward pass through full NN '''
         A_curr = X
 
@@ -58,11 +124,12 @@ class Network:
                                                      W_curr,
                                                      b_curr,
                                                      activation)
+            #self.memory[idx] = {'A':A_prev , 'Z':Z_curr}
             self.memory.append({'A':A_prev, 'Z':Z_curr})
     
         return A_curr
 
-    def backward_propagation(self, y_hat, y):
+    def _backward_propagation(self, y_hat, y):
         ''' Does a backward pass through full NN '''
         #y = y.reshape(y_hat.shape)
         #COMPUTE LOSS: Only giong to do categorical cross-entropy
@@ -72,6 +139,8 @@ class Network:
         dA_prev /= len(y)
 
         for idx, layer in reversed(list(enumerate(self.network))):
+            #mem_idx = -(idx +1)
+            #print('idx:',idx,'len(memory)',len(self.memory))
             dA_curr = dA_prev
             A_prev = self.memory[idx]['A']
             Z_curr = self.memory[idx]['Z']
@@ -81,122 +150,76 @@ class Network:
             dA_prev, dW_curr, db_curr = layer.backward(
                 dA_curr, W_curr, Z_curr, A_prev, activation)
             
-            self.gradients.append({
-                'dW':dW_curr,
-                'db':db_curr
-            })
+            #self.gradients[idx] = {'dW':dW_curr , 'db':db_curr}
+            self.gradients.append({'dW':dW_curr, 'db':db_curr})
 
-    def gradient_descent(self, learn_rate):
+    def _gradient_descent(self, learn_rate):
         for idx, layer in enumerate(self.network):
             self.params[idx]['W'] -= learn_rate * list(reversed(self.gradients))[idx]['dW'].T
             self.params[idx]['b'] -= learn_rate * list(reversed(self.gradients))[idx]['db']
 
-    '''
-    def get_accuracy(self, y_hat, y):
+    def _get_accuracy(self, y_hat, y):
         return np.mean(np.argmax(y_hat, axis=1) == y)
-    '''
         
-    def calculate_loss(self, y_hat, y):
+    def _calculate_loss(self, y_hat, y):
         ''' Cross Entropy Loss '''
         eps = 1e-5
         log_prob = -np.log(y_hat + eps)
         return np.sum(log_prob)/len(y)
 
-    def fit(self, X, y, dev_X, dev_y, init_range, epochs, learn_rate):
-        ''' Train the NN '''
-        self.init_layers(init_range)
+    def fit(self, X, y, init_range, epochs, learn_rate):
+        ''' Train the NN 
+        TODO - Add in minibatching
+             - Add functionality to evaluate on dev/validation set
+             - Add Cross-Validation
+             - Add in regression functionality
+             - Be able to predict on test set
+        '''
+        self._init_layers(X.shape[1], init_range)
         
         self.loss = []
         self.dev_loss = []
-        #self.accuracy = []
-        min_loss = 1
-        for i in range(epochs+1):
-            y_hat = self.forward_propagation(X)
-            self.loss.append(self.calculate_loss(y_hat, y))
-            #self.accuracy.append(self.get_accuracy(y_hat, y))
+        self.accuracy = []
+        while self.curr_epoch <= epochs:
+            y_hat = self._forward_propagation(X)
 
-            if self.loss[i] < min_loss:
-                self.checkpoint = self.params.copy()
+            self.loss.append(self._calculate_loss(y_hat, y))
+            self.accuracy.append(self._get_accuracy(y_hat, y))
 
-            self.backward_propagation(y_hat, y)
-            self.gradient_descent(learn_rate)
+            self._backward_propagation(y_hat, y)
+            self._gradient_descent(learn_rate)
 
-            #dev_y_hat = self.forward_propagation(dev_X)
-            #self.dev_loss.append(self.calculate_loss(dev_y_hat, dev_y))
         
-            if i % 10 == 0:
-                #s = 'EPOCH: {0:0=3d} '.format(i), 'ACCURACY: {0:0=3f} '.format(self.accuracy[-1]), 'LOSS: {0:0=3f}'.format(self.loss[-1])
-                s = 'EPOCH: {0:0=3d} '.format(i), 'Training Loss: {0:0=3f}'.format(self.loss[-1])#, 'Dev Loss: {0:0=3f}'.format(self.dev_loss[-1])
+            if self.curr_epoch % 100 == 0:
+                s = 'EPOCH: {}, ACCURACY: {}, LOSS: {}'.format(self.curr_epoch, self.accuracy[-1], self.loss[-1])
                 print(s)
+
+            self.curr_epoch += 1
             
 
-class DenseLayer:
-    def __init__(self, neurons):
-        self.neurons = neurons
 
-    def relu(self, Z):
-        return np.maximum(0,Z)
-
-    def sigmoid(self, Z):
-        return 1 / (1 + np.exp(-Z))
-
-    def softmax(self, Z):
-        exp = np.exp(Z)
-        exp_sum = np.sum(exp, axis=1, keepdims=True)
-        return exp/exp_sum
-
-    def derivative_relu(self, dA, Z):
-        dZ = np.array(dA, copy=True)
-        dZ[Z <= 0] = 0
-        return dZ
-
-    def derivative_sigmoid(self, dA, Z):
-        sig = self.sigmoid(Z)
-        return dA*sig*(1-sig)
-        
-    def forward(self, A_prev, W_curr, b_curr, activation):
-        ''' Forward Propagation of a single layer '''
-        Z_curr = np.dot(A_prev, W_curr.T) + b_curr
-
-        if activation == "relu":
-            A_curr = self.relu(Z_curr)
-        elif activation == "sigmoid":
-            A_curr = self.sigmoid(Z_curr)
-        elif activation == "softmax":
-            A_curr = self.softmax(Z_curr)
-        else:
-            raise Exception("Activation function "+activation+ " not supported")
-        
-        return A_curr, Z_curr
-
-    def backward(self, dA_curr, W_curr, Z_curr, A_prev, activation):
-        ''' Backward Propagation of a single layer '''
-        if activation == 'softmax':
-            dW_curr = np.dot(A_prev.T, dA_curr)
-            db_curr = np.sum(dA_curr, axis=0, keepdims=True)
-            dA_prev = np.dot(dA_curr, W_curr)
-        elif activation == 'relu':
-            dZ_curr = self.derivative_relu(dA_curr, Z_curr)
-            dW_curr = np.dot(A_prev.T, dZ_curr)
-            db_curr = np.sum(dZ_curr, axis=0, keepdims=True)
-            dA_prev = np.dot(dZ_curr, W_curr)
-        else:
-            raise Exception('Activation function '+activation+' not supported')
-
-        return dA_prev, dW_curr, db_curr
-
-
-
-train_X = np.loadtxt("./prog1_data/dataset2.train_features.txt", dtype=float).astype(np.float32).T
-train_y = np.loadtxt("./prog1_data/dataset2.train_targets.txt", dtype=float).astype(np.float32)
-dev_X   = np.loadtxt("./prog1_data/dataset2.dev_features.txt", dtype=float).astype(np.float32).T
-dev_y   = np.loadtxt("./prog1_data/dataset2.dev_targets.txt", dtype=float).astype(np.float32)
+train_X = np.loadtxt("./data/dataset2.train_features.txt", dtype=float).astype(np.float32)
+train_y = np.loadtxt("./data/dataset2.train_targets.txt", dtype=float).astype(np.float32)
+dev_X   = np.loadtxt("./data/dataset2.dev_features.txt", dtype=float).astype(np.float32)
+dev_y   = np.loadtxt("./data/dataset2.dev_targets.txt", dtype=float).astype(np.float32)
 
 model = Network()
 model.add(DenseLayer(4))
-model.add(DenseLayer(6))
-model.add(DenseLayer(8))
-model.add(DenseLayer(4))
+#model.add(DenseLayer(6))
+#model.add(DenseLayer(8))
+#model.add(DenseLayer(4))
 model.add(DenseLayer(3))
 model.compile(train_X)
-model.fit(train_X, train_y, dev_X, dev_y, 0.4, 500, 0.1)
+#model._init_layers(1)
+model.fit(train_X, train_y, 0.4, 50, 0.1)
+print('gradients length: ', len(model.gradients))
+print('params length: ', len(model.params))
+print('memory length: ', len(model.memory))
+print(train_X.shape)
+print('W1',model.params[0]['W'].shape, ' b1', model.params[0]['b'].shape)
+print('Z1', model.memory[0]['Z'].shape,' A1', model.memory[0]['A'].shape)
+print('dW1',model.gradients[1]['dW'].shape, ' db1', model.gradients[1]['db'].shape)
+print()
+print('W2',model.params[1]['W'].shape, ' b2', model.params[1]['b'].shape)
+print('Z2',model.memory[1]['Z'].shape, ' A2',model.memory[1]['A'].shape)
+print('dW2',model.gradients[0]['dW'].shape, ' db2', model.gradients[0]['db'].shape)
