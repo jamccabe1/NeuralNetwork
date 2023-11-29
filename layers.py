@@ -1,63 +1,96 @@
 import numpy as np
+from scipy import signal
+
+class Layer:
+    def __init__(self):
+        self.input = None
+        self.output = None
+
+    # Compute the output Y of a layer for given input X
+    def forward_propagation(self, input):
+        raise NotImplementedError
+    
+    # Compute dE/dX for a given dE/dY and update params if needed
+    def backward_propagation(self, output_err, learn_rate):
+        raise NotImplementedError
 
 
-class DenseLayer:
-    def __init__(self, neurons):
-        self.neurons = neurons
+class Dense(Layer):
+    def __init__(self, input_size, output_size):
+        self.weights = np.random.rand(input_size, output_size) - 0.5
+        self.bias = np.random.rand(1, output_size) - 0.5
 
-    def _relu(self, Z):
-        return np.maximum(0,Z)
+    def forward_propagation(self, input_data):
+        self.input = input_data
+        self.output = np.dot(self.input, self.weights) + self.bias
+        return self.output
 
-    def _sigmoid(self, Z):
-        return 1 / (1 + np.exp(-Z))
+    def backward_propagation(self, output_err, learning_rate):
+        input_err = np.dot(output_err, self.weights.T)
+        weights_err = np.dot(self.input.T, output_err)
 
-    def _softmax(self, Z):
+        self.weights -= learning_rate * weights_err
+        self.bias -= learning_rate * output_err
+        return input_err    
+
+
+class Activation(Layer):
+    def __init__(self, activation, activation_prime):
+        self.activation = activation
+        self.activation_prime = activation_prime
+
+    def forward_propagation(self, input):
+        self.input = input
+        self.output = self.activation(self.input)
+        return self.output
+    
+    def backward_propagation(self, output_err, learn_rate):
+        return self.activation_prime(self.input) * output_err
+
+
+class Flatten(Layer):
+    # returns the flattened input
+    def forward_propagation(self, input_data):
+        self.input = input_data
+        self.output = input_data.flatten().reshape((1,-1))
+        return self.output
+
+    def backward_propagation(self, output_error, learning_rate):
+        return output_error.reshape(self.input.shape)
+
+
+class Conv(Layer):
+    def __init__(self, input_shape, kernel_shape, layer_depth):
+        self.input_shape = input_shape
+        self.input_depth = input_shape[2]
+        self.kernel_shape = kernel_shape
+        self.layer_depth = layer_depth
+        self.output_shape = (input_shape[0]-kernel_shape[0]+1, input_shape[1]-kernel_shape[1]+1, layer_depth)
         
-        exp = np.exp(Z)
-        exp_sum = np.sum(exp, axis=1, keepdims=True)
-        return exp/exp_sum
+        self.weights = np.random.rand(kernel_shape[0], kernel_shape[1], self.input_depth, layer_depth) - 0.5
+        self.bias = np.random.rand(layer_depth) - 0.5
 
-    def _derivative_relu(self, dA, Z):
-        dZ = np.array(dA, copy=True)
-        dZ[Z <= 0] = 0
-        return dZ
+    def forward_propagation(self, input):
+        self.input = input
+        self.output = np.zeros(self.output_shape)
 
-    def _derivative_sigmoid(self, dA, Z):
-        sig = self._sigmoid(Z)
-        return dA*sig*(1-sig)
+        for k in range(self.layer_depth):
+            for d in range(self.input_depth):
+                self.output[:,:,k] += signal.correlate2d(self.input[:,:,d], self.weights[:,:,d,k], 'valid') + self.bias[k]
         
-    def forward(self, A_prev, W_curr, b_curr, activation):
-        ''' Forward Propagation of a single layer '''
-        Z_curr = np.dot(A_prev, W_curr.T) + b_curr
-        if activation == "relu":
-            A_curr = self._relu(Z_curr)
-        elif activation == "sigmoid":
-            A_curr = self._sigmoid(Z_curr)
-        elif activation == "softmax":
-            A_curr = self._softmax(Z_curr)
-        else:
-            raise Exception("Activation function "+activation+ " not supported")
-        
-        return A_curr, Z_curr
+        return self.output
 
-    def backward(self, dA_curr, W_curr, Z_curr, A_prev, activation):
-        ''' Backward Propagation of a single layer '''
-        m = A_prev.shape[0]
+    def backward_propagation(self, output_err, learn_rate):
+        in_error = np.zeros(self.input_shape)
+        dWeights = np.zeros((self.kernel_shape[0], self.kernel_shape[1], self.input_depth, self.layer_depth))
+        dBias = np.zeros(self.layer_depth)
 
-        if activation == 'softmax':
-            dW_curr = (1/m) * np.dot(A_prev.T, dA_curr)
-            db_curr = (1/m) * np.sum(dA_curr, axis=0, keepdims=True)
-            dA_prev = np.dot(dA_curr, W_curr)
-        elif activation == 'sigmoid':
-            dW_curr = (1/m) * np.dot(A_prev.T, dA_curr)
-            db_curr = (1/m) * np.sum(dA_curr, axis=0, keepdims=True)
-            dA_prev = np.dot(dA_curr, W_curr)
-        elif activation == 'relu':
-            dZ_curr = self._derivative_relu(dA_curr, Z_curr)
-            dW_curr = (1/m) * np.dot(A_prev.T, dZ_curr)
-            db_curr = (1/m) * np.sum(dZ_curr, axis=0, keepdims=True)
-            dA_prev = np.dot(dZ_curr, W_curr)
-        else:
-            raise Exception('Activation function '+activation+' not supported')
+        for k in range(self.layer_depth):
+            for d in range(self.input_depth):
+                in_error[:,:,d] += signal.convolve2d(output_err[:,:,k], self.weights[:,:,d,k], 'full')
+                dWeights[:,:,d,k] = signal.correlate2d(self.input[:,:,d], output_err[:,:,k], 'valid')
+            dBias[k] = self.layer_depth * np.sum(output_err[:,:,k])
 
-        return dA_prev, dW_curr, db_curr
+        self.weights -= learn_rate * dWeights
+        self.bias -= learn_rate * dBias
+        return in_error
