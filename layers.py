@@ -1,3 +1,13 @@
+"""
+Available layers to use for Neural Network. They all inherit from the 
+base "Layer". The current options are:
+    Dense - a fully connected layer
+    Activation - does not update parameters, only applies a specified 
+                activation function.
+    Flatten - flattens the input
+    Conv - A convolutional layer
+"""
+
 import numpy as np
 from scipy import signal
 
@@ -49,7 +59,6 @@ class Activation(Layer):
 
 
 class Flatten(Layer):
-    # returns the flattened input
     def forward_propagation(self, input_data):
         self.input = input_data
         self.output = input_data.flatten().reshape((1,-1))

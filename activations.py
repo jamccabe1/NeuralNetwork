@@ -1,3 +1,10 @@
+"""
+Available activation functions with their respective derivatives.
+The current options are:
+    Sigmoid
+    tanh (hyperbolic tangent)
+    ReLU (Rectified Linear Unit)
+"""
 import numpy as np
 
 def sigmoid(x):

@@ -1,3 +1,7 @@
+"""
+Main class of the Neural Network. 
+"""
+
 class Network:
     def __init__(self):
         self.layers = []
